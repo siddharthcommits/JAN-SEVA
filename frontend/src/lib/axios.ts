@@ -3,7 +3,7 @@ import { useAuthStore } from '../store/authStore';
 
 export const api = axios.create({
 //  baseURL: 'http://localhost:3000', // Adjust to match your backend port
- baseURL: 'https://jan-seva-nine.vercel.app', // Adjust to match your backend port
+ baseURL: 'https://jan-seva-backend-phi.vercel.app', // Adjust to match your backend port
  headers: {
  'Content-Type': 'application/json',
  },
