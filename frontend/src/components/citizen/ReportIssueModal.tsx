@@ -21,8 +21,7 @@ interface Department {
   name: string;
 }
 
-const IMAGEKIT_URL_ENDPOINT = 'https://ik.imagekit.io/your_imagekit_id';
-const IMAGEKIT_PUBLIC_KEY = 'your_imagekit_public_key';
+const IMAGEKIT_PUBLIC_KEY = 'public_O6ij2BGxhFwuRCv75GQfnAIn4jw=';
 
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [title, setTitle] = useState('');
@@ -40,6 +39,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
   
   // Image upload state
   const [images, setImages] = useState<string[]>([]);
+  console.log(images);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
