@@ -4,29 +4,22 @@ import { ApiResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { Issue } from "../models/issue.model";
 import { User } from "../models/user.model";
+import { Ward } from "../models/ward.model";
+import { Department } from "../models/department.model";
 
 export const getAuthorityIssues = asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
         throw new ApiError(401, "Unauthorized request");
     }
 
-    const conditions: Record<string, unknown>[] = [];
-
-    if (req.user.departmentId) {
-        conditions.push({ departmentId: req.user.departmentId });
-    }
-
-    if (req.user.wardId) {
-        conditions.push({ wardId: req.user.wardId });
-    }
-
-    if (conditions.length === 0) {
+    if (!req.user.departmentId) {
         return res
             .status(200)
-            .json(new ApiResponse(200, [], "No ward or department assigned for this authority"));
+            .json(new ApiResponse(200, [], "No department assigned for this authority"));
     }
 
-    const issues = await Issue.find({ $or: conditions })
+    // Authorities see ALL issues in their department, regardless of ward/locality
+    const issues = await Issue.find({ departmentId: req.user.departmentId })
         .populate("reportedBy", "name email role")
         .populate("wardId", "name wardNumber city state")
         .populate("departmentId", "name")

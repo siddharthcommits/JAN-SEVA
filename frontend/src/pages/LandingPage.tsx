@@ -7,15 +7,15 @@ import { MapPreview } from '../components/landing/MapPreview';
 import { Footer } from '../components/landing/Footer';
 
 export function LandingPage() {
-  return (
-    <div className="min-h-screen">
-      <NavBar />
-      <Hero />
-      <Process />
-      <Features />
-      <Stats />
-      <MapPreview />
-      <Footer />
-    </div>
-  );
+ return (
+ <div className="min-h-screen">
+ <NavBar />
+ <Hero />
+ <Process />
+ <Features />
+ <Stats />
+ <MapPreview />
+ <Footer />
+ </div>
+ );
 }

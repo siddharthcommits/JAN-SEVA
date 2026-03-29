@@ -7,6 +7,8 @@ import cookieParser from "cookie-parser";
 import { authRouter } from "./routes/auth.route";
 import { issueRouter } from "./routes/issue.route";
 import { authorityRouter } from "./routes/authority.route";
+import { dataRouter } from "./routes/data.route";
+import { imagekitRouter } from "./routes/imagekit.route";
 import { ApiError } from "./utils/ApiError";
 
 const app = express();
@@ -54,6 +56,8 @@ app.get("/", (req, res) => {
 app.use("/auth", authRouter);
 app.use("/issues", issueRouter);
 app.use("/authority", authorityRouter);
+app.use("/data", dataRouter);
+app.use("/imagekit", imagekitRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof ApiError) {
@@ -73,3 +77,4 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 });
 
 export { app };
+

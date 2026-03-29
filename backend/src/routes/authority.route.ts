@@ -9,11 +9,7 @@ import { requireRoles } from "../middlewares/role.middleware";
 const router = Router();
 
 router.get("/issues", verifyJWT, requireRoles("authority", "admin"), getAuthorityIssues);
-router.get(
-    "/leaderboard",
-    verifyJWT,
-    requireRoles("authority", "admin"),
-    getAuthorityLeaderboard
-);
+router.get("/leaderboard", verifyJWT, getAuthorityLeaderboard);
 
 export { router as authorityRouter };
+

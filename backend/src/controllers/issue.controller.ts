@@ -5,7 +5,10 @@ import { ApiResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { Issue } from "../models/issue.model";
 import { Vote } from "../models/vote.model";
+import { Comment } from "../models/comment.model";
 import { User } from "../models/user.model";
+import { Ward } from "../models/ward.model";
+import { Department } from "../models/department.model";
 
 const validCategories = ["road", "garbage", "sewage", "water", "electricity"];
 
@@ -72,7 +75,7 @@ export const createIssue = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getIssues = asyncHandler(async (req: Request, res: Response) => {
-    const { category, ward, wardId, department, departmentId, status } = req.query;
+    const { category, ward, wardId, department, departmentId, status, sort } = req.query;
 
     const filters: Record<string, unknown> = {};
 
@@ -93,13 +96,32 @@ export const getIssues = asyncHandler(async (req: Request, res: Response) => {
         filters.status = status;
     }
 
+    let sortOption: Record<string, 1 | -1> = { createdAt: -1 };
+    if (sort === "upvotes") {
+        sortOption = { upvotes: -1 };
+    }
+
     const issues = await Issue.find(filters)
-        .populate("reportedBy", "name email role")
+        .populate("reportedBy", "name email role avatar")
         .populate("wardId", "name wardNumber city state")
         .populate("departmentId", "name")
-        .sort({ createdAt: -1 });
+        .sort(sortOption);
 
-    return res.status(200).json(new ApiResponse(200, issues, "Issues fetched successfully"));
+    // Attach comment counts
+    const issueIds = issues.map((i) => i._id);
+    const commentCounts = await Comment.aggregate([
+        { $match: { issueId: { $in: issueIds } } },
+        { $group: { _id: "$issueId", count: { $sum: 1 } } },
+    ]);
+    const countMap = new Map(commentCounts.map((c) => [c._id.toString(), c.count]));
+
+    const issuesWithComments = issues.map((issue) => {
+        const obj = issue.toObject();
+        (obj as any).commentCount = countMap.get(issue._id.toString()) || 0;
+        return obj;
+    });
+
+    return res.status(200).json(new ApiResponse(200, issuesWithComments, "Issues fetched successfully"));
 });
 
 export const getIssueById = asyncHandler(async (req: Request, res: Response) => {
@@ -108,7 +130,7 @@ export const getIssueById = asyncHandler(async (req: Request, res: Response) => 
     ensureObjectId(id, "Issue id");
 
     const issue = await Issue.findById(id)
-        .populate("reportedBy", "name email role")
+        .populate("reportedBy", "name email role avatar")
         .populate("wardId", "name wardNumber city state")
         .populate("departmentId", "name description")
         .populate("resolvedBy", "name email role");
@@ -117,7 +139,11 @@ export const getIssueById = asyncHandler(async (req: Request, res: Response) => 
         throw new ApiError(404, "Issue not found");
     }
 
-    return res.status(200).json(new ApiResponse(200, issue, "Issue fetched successfully"));
+    const commentCount = await Comment.countDocuments({ issueId: id });
+    const issueObj = issue.toObject();
+    (issueObj as any).commentCount = commentCount;
+
+    return res.status(200).json(new ApiResponse(200, issueObj, "Issue fetched successfully"));
 });
 
 export const getNearbyIssues = asyncHandler(async (req: Request, res: Response) => {
@@ -142,11 +168,26 @@ export const getNearbyIssues = asyncHandler(async (req: Request, res: Response) 
             },
         },
     })
+        .populate("reportedBy", "name email role avatar")
         .populate("wardId", "name wardNumber city state")
         .populate("departmentId", "name")
         .sort({ createdAt: -1 });
 
-    return res.status(200).json(new ApiResponse(200, issues, "Nearby issues fetched successfully"));
+    // Attach comment counts
+    const issueIds = issues.map((i) => i._id);
+    const commentCounts = await Comment.aggregate([
+        { $match: { issueId: { $in: issueIds } } },
+        { $group: { _id: "$issueId", count: { $sum: 1 } } },
+    ]);
+    const countMap = new Map(commentCounts.map((c) => [c._id.toString(), c.count]));
+
+    const issuesWithComments = issues.map((issue) => {
+        const obj = issue.toObject();
+        (obj as any).commentCount = countMap.get(issue._id.toString()) || 0;
+        return obj;
+    });
+
+    return res.status(200).json(new ApiResponse(200, issuesWithComments, "Nearby issues fetched successfully"));
 });
 
 export const voteOnIssue = asyncHandler(async (req: Request, res: Response) => {
@@ -252,4 +293,52 @@ export const resolveIssue = asyncHandler(async (req: Request, res: Response) => 
             "Issue resolved successfully"
         )
     );
+});
+
+// ---- Comments ----
+
+export const addComment = asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+        throw new ApiError(401, "Unauthorized request");
+    }
+
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    ensureObjectId(id, "Issue id");
+
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+        throw new ApiError(400, "Comment text is required");
+    }
+
+    const issue = await Issue.findById(id);
+    if (!issue) {
+        throw new ApiError(404, "Issue not found");
+    }
+
+    const comment = await Comment.create({
+        issueId: id,
+        userId: req.user.id,
+        text: text.trim(),
+    });
+
+    const populated = await comment.populate("userId", "name email avatar");
+
+    return res
+        .status(201)
+        .json(new ApiResponse(201, populated, "Comment added successfully"));
+});
+
+export const getComments = asyncHandler(async (req: Request, res: Response) => {
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    ensureObjectId(id, "Issue id");
+
+    const comments = await Comment.find({ issueId: id })
+        .populate("userId", "name email avatar")
+        .sort({ createdAt: -1 });
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, comments, "Comments fetched successfully"));
 });

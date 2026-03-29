@@ -94,3 +94,22 @@ export const ensureValidObjectId = (id: string, name: string) => {
         throw new ApiError(400, `${name} is invalid`);
     }
 };
+
+export const getMe = asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+        throw new ApiError(401, "Unauthorized request");
+    }
+
+    const user = await User.findById(req.user.id)
+        .select("-password")
+        .populate("wardId", "name wardNumber city state")
+        .populate("departmentId", "name");
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, user, "User profile fetched"));
+});

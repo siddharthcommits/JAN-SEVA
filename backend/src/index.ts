@@ -1,3 +1,11 @@
+// Import models to ensure they are registered
+import "./models/user.model";
+import "./models/ward.model";
+import "./models/department.model";
+import "./models/issue.model";
+import "./models/vote.model";
+import "./models/comment.model";
+
 import { connectDB } from "./db/db";
 import { app } from "./app";
 
