@@ -1,5 +1,8 @@
+import { useNavigate } from "react-router-dom";
+
 export function NavBar() {
- return (
+    const navigate = useNavigate();
+    return (
  <nav className="fixed top-0 w-full z-50 glass-nav">
  <div className="flex justify-between items-center max-w-7xl mx-auto px-6 md:px-8 h-20">
  <div className="text-2xl font-extrabold text-primary tracking-tight font-headline flex items-center gap-2">
@@ -17,7 +20,7 @@ export function NavBar() {
  </div>
  
  <div className="flex items-center gap-4">
- <button className="hidden md:flex bg-secondary text-white px-7 py-2.5 rounded-full font-bold text-sm hover:brightness-105 transition-all premium-shadow flex items-center gap-2">
+ <button className="hidden md:flex bg-secondary text-white px-7 py-2.5 rounded-full font-bold text-sm hover:brightness-105 transition-all premium-shadow flex items-center gap-2" onClick={() => navigate('/login')}>
  <span className="material-symbols-outlined text-sm">add_circle</span>
  Report an Issue
  </button>
