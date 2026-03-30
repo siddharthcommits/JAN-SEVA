@@ -31,9 +31,9 @@ const seedData = async () => {
         
         console.log("Cleared existing data");
 
-        // Wards
-        const ward1 = await Ward.create({ name: "Downtown", wardNumber: 1, city: "Metropolis", state: "State" });
-        const ward2 = await Ward.create({ name: "Uptown", wardNumber: 2, city: "Metropolis", state: "State" });
+        // Wards — Delhi localities
+        const ward1 = await Ward.create({ name: "Dwarka", wardNumber: 1, city: "New Delhi", state: "Delhi" });
+        const ward2 = await Ward.create({ name: "Burari", wardNumber: 2, city: "New Delhi", state: "Delhi" });
 
         // Departments
         const roadDept = await Department.create({ name: "Roads & Highways", description: "Maintenance of roads" });
@@ -43,32 +43,32 @@ const seedData = async () => {
 
         // Users - password is 'password123' (will be hashed automatically by user model pre-save hook)
         const citizenUser = await User.create({
-            name: "John Citizen",
+            name: "Rajesh Kumar",
             email: "citizen@example.com",
-            phone: "+1234567890",
+            phone: "+919876543210",
             password: "password123",
             role: "citizen",
             wardId: ward1._id
         });
 
         const authorityUser = await User.create({
-            name: "Officer Smith",
+            name: "Inspector Sharma",
             email: "authority@example.com",
-            phone: "+1987654321",
+            phone: "+919876543211",
             password: "password123",
             role: "authority",
             wardId: ward1._id,
             departmentId: roadDept._id
         });
 
-        // Issues
+        // Issues — Delhi locations
         const issues = [
             {
-                title: "Large Pothole on Main Street",
-                description: "There is a massive pothole causing traffic delays and vehicle damage. Please fix ASAP.",
+                title: "Large Pothole near Dwarka Sector 10 Metro",
+                description: "There is a massive pothole near the metro station entrance causing traffic delays and vehicle damage. Please fix ASAP.",
                 category: "road",
                 images: ["https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&q=80&w=800"],
-                location: { type: "Point", coordinates: [-73.935242, 40.730610] },
+                location: { type: "Point", coordinates: [77.0460, 28.5921] },
                 wardId: ward1._id,
                 departmentId: roadDept._id,
                 reportedBy: citizenUser._id,
@@ -77,11 +77,11 @@ const seedData = async () => {
                 downvotes: 1
             },
             {
-                title: "Overflowing Garbage Bins",
-                description: "The garbage hasn't been collected for 3 days near the central park entrance.",
+                title: "Overflowing Garbage Bins at Burari Chowk",
+                description: "The garbage hasn't been collected for 3 days near Burari Chowk. Terrible stench and stray animals everywhere.",
                 category: "garbage",
                 images: ["https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?auto=format&fit=crop&q=80&w=800"],
-                location: { type: "Point", coordinates: [-73.135242, 40.230610] },
+                location: { type: "Point", coordinates: [77.1900, 28.7580] },
                 wardId: ward2._id,
                 departmentId: sanitationDept._id,
                 reportedBy: citizenUser._id,
@@ -90,11 +90,11 @@ const seedData = async () => {
                 downvotes: 0
             },
             {
-                title: "Burst Water Pipe",
-                description: "Water is flooding the sidewalk and causing a hazard for pedestrians.",
+                title: "Burst Water Pipe in Dwarka Sector 12",
+                description: "Water is flooding the sidewalk near Sector 12 market and causing a hazard for pedestrians.",
                 category: "water",
                 images: ["https://images.unsplash.com/photo-1519961234850-29c88248de30?auto=format&fit=crop&q=80&w=800"],
-                location: { type: "Point", coordinates: [-73.535242, 40.530610] },
+                location: { type: "Point", coordinates: [77.0509, 28.5823] },
                 wardId: ward1._id,
                 departmentId: waterDept._id,
                 reportedBy: citizenUser._id,
@@ -105,11 +105,11 @@ const seedData = async () => {
                 resolvedAt: new Date()
             },
             {
-                title: "Streetlight not working",
-                description: "The main streetlight is out, making it very unsafe to walk at night.",
+                title: "Streetlights not working on Burari Main Road",
+                description: "All streetlights on Burari Main Road are out, making it very unsafe to walk at night. Multiple theft incidents reported.",
                 category: "electricity",
                 images: ["https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&q=80&w=800"],
-                location: { type: "Point", coordinates: [-73.835242, 40.830610] },
+                location: { type: "Point", coordinates: [77.1960, 28.7535] },
                 wardId: ward2._id,
                 departmentId: powerDept._id,
                 reportedBy: citizenUser._id,

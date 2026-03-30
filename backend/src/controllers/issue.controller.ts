@@ -75,7 +75,7 @@ export const createIssue = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getIssues = asyncHandler(async (req: Request, res: Response) => {
-    const { category, ward, wardId, department, departmentId, status, sort } = req.query;
+    const { category, ward, wardId, department, departmentId, status, sort, limit } = req.query;
 
     const filters: Record<string, unknown> = {};
 
@@ -101,11 +101,20 @@ export const getIssues = asyncHandler(async (req: Request, res: Response) => {
         sortOption = { upvotes: -1 };
     }
 
-    const issues = await Issue.find(filters)
+    let query = Issue.find(filters)
         .populate("reportedBy", "name email role avatar")
         .populate("wardId", "name wardNumber city state")
         .populate("departmentId", "name")
         .sort(sortOption);
+
+    if (limit) {
+        const limitNum = parseInt(limit as string, 10);
+        if (!Number.isNaN(limitNum) && limitNum > 0) {
+            query = query.limit(limitNum);
+        }
+    }
+
+    const issues = await query;
 
     // Attach comment counts
     const issueIds = issues.map((i) => i._id);

@@ -23,12 +23,12 @@ export const TrendingSidebar = () => {
   useEffect(() => {
     const fetchTrending = async () => {
       try {
-        const res = await api.get('/issues', { params: { sort: 'upvotes' } });
+        const res = await api.get('/issues', { params: { sort: 'upvotes', limit: 5 } });
         if (res.data?.data) {
-          setTrending(res.data.data.slice(0, 5));
+          setTrending(res.data.data);
         }
-      } catch {
-        // fallback silently
+      } catch (err) {
+        console.warn('Failed to fetch trending issues:', err);
       } finally {
         setLoading(false);
       }
