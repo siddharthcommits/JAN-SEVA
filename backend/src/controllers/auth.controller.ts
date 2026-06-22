@@ -44,6 +44,8 @@ export const registerUser = asyncHandler(async (req: Request, res: Response) => 
         email: user.email,
         phone: user.phone,
         role: user.role,
+        points: user.points,
+        issuesResolved: user.issuesResolved,
     };
 
     return res
@@ -80,6 +82,8 @@ export const loginUser = asyncHandler(async (req: Request, res: Response) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        points: user.points,
+        issuesResolved: user.issuesResolved,
         wardId: user.wardId,
         departmentId: user.departmentId,
     };

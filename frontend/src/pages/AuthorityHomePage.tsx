@@ -25,6 +25,18 @@ export const AuthorityHomePage = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
+  // AI-powered feature states
+  const [insights, setInsights] = useState<any>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  
+  // Resolution states
+  const [resolvingIssueId, setResolvingIssueId] = useState<string | null>(null);
+  const [resolutionFiles, setResolutionFiles] = useState<File[]>([]);
+  const [resolutionPreviews, setResolutionPreviews] = useState<string[]>([]);
+  const [isResolving, setIsResolving] = useState(false);
+  const [verificationFeedback, setVerificationFeedback] = useState('');
+  const [resolutionUploading, setResolutionUploading] = useState(false);
+
   if (!isAuthenticated || (user?.role !== 'authority' && user?.role !== 'admin')) {
     return <Navigate to="/login" replace />;
   }
@@ -50,18 +62,31 @@ export const AuthorityHomePage = () => {
     }
   };
 
+  const fetchInsights = async () => {
+    try {
+      setInsightsLoading(true);
+      const res = await api.get('/ai/ward-insights');
+      if (res.data?.data) {
+        setInsights(res.data.data);
+        toast.success('AI Ward Insights generated!');
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.response?.data?.message || 'Failed to generate insights');
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
 
-  const handleResolve = async (id: string) => {
-    try {
-      await api.post(`/issues/${id}/resolve`);
-      toast.success('Issue resolved successfully');
-      fetchData();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to resolve issue');
-    }
+  const handleResolve = (id: string) => {
+    setResolvingIssueId(id);
+    setResolutionFiles([]);
+    setResolutionPreviews([]);
+    setVerificationFeedback('');
   };
 
   // Calculate map center from issues
@@ -264,9 +289,76 @@ export const AuthorityHomePage = () => {
           )}
         </section>
 
-        {/* Sidebar - Leaderboard */}
+        {/* Sidebar - Leaderboard & AI Insights */}
         <section className="col-span-1 flex flex-col gap-6">
-          <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+          {/* AI Ward Insights */}
+          <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 rounded-3xl text-white shadow-xl flex flex-col gap-4 border border-blue-800/30">
+            <h3 className="text-lg font-black tracking-tight flex items-center gap-2 text-white">
+              <span className="material-symbols-outlined text-amber-400">auto_awesome</span>
+              Predictive Ward Insights
+            </h3>
+            <p className="text-xs text-blue-200 leading-relaxed font-medium">
+              Analyze all reported issues in your ward using Gemini to identify hotspots, track trends, and plan resource allocation.
+            </p>
+            {insightsLoading ? (
+              <div className="flex justify-center py-4">
+                <span className="material-symbols-outlined animate-spin text-white text-2xl">progress_activity</span>
+              </div>
+            ) : insights ? (
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={fetchInsights}
+                  className="w-full py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                >
+                  🔄 Regenerate Reports
+                </button>
+                
+                <div className="bg-white/5 rounded-2xl p-4 flex flex-col gap-3 border border-white/10 max-h-[300px] overflow-y-auto text-xs scrollbar-thin text-left">
+                  <div>
+                    <h4 className="font-bold text-amber-300 mb-1">Ward Summary</h4>
+                    <p className="text-blue-100 font-normal leading-relaxed">{insights.summary}</p>
+                  </div>
+                  
+                  {insights.criticalAreas && insights.criticalAreas.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-red-400 mb-1">Critical Areas</h4>
+                      <ul className="list-disc pl-4 text-blue-100 font-normal space-y-1">
+                        {insights.criticalAreas.map((area: string, i: number) => (
+                          <li key={i}>{area}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div>
+                    <h4 className="font-bold text-blue-300 mb-1">Trend Analysis</h4>
+                    <p className="text-blue-100 font-normal leading-relaxed">{insights.trendAnalysis}</p>
+                  </div>
+
+                  {insights.resourceAllocationRecommendations && insights.resourceAllocationRecommendations.length > 0 && (
+                    <div>
+                      <h4 className="font-bold text-emerald-400 mb-1">Resource Recommendations</h4>
+                      <ul className="list-decimal pl-4 text-blue-100 font-normal space-y-1">
+                        {insights.resourceAllocationRecommendations.map((rec: string, i: number) => (
+                          <li key={i}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={fetchInsights}
+                className="w-full py-3 bg-[#f59e0b] hover:bg-[#d97706] text-slate-900 rounded-xl font-black text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer border-0"
+              >
+                <span className="material-symbols-outlined text-sm">analytics</span>
+                Generate AI Insights
+              </button>
+            )}
+          </div>
+
+          <h2 className="text-xl font-black tracking-tight flex items-center gap-2 mt-4">
             <span className="material-symbols-outlined text-secondary">leaderboard</span>
             Leaderboard
           </h2>
@@ -313,6 +405,158 @@ export const AuthorityHomePage = () => {
           </div>
         </section>
       </main>
+
+      {/* Resolve Issue Modal */}
+      {resolvingIssueId && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-surface-container-lowest text-on-surface w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col p-6 gap-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+              <h3 className="text-xl font-black text-primary">Provide Resolution Proof</h3>
+              <button 
+                onClick={() => {
+                  setResolvingIssueId(null);
+                  setResolutionFiles([]);
+                  setResolutionPreviews([]);
+                  setVerificationFeedback('');
+                }}
+                className="p-1 hover:bg-slate-100 rounded-full"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-500 font-medium leading-relaxed">
+              Upload a photograph confirming the resolution (e.g. clean road, filled pothole). Gemini will compare this photo with the original complaint photo to verify completion.
+            </p>
+
+            {/* Proof Upload Area */}
+            <div 
+              onClick={() => {
+                const el = document.getElementById('res-file-input');
+                el?.click();
+              }}
+              className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-all"
+            >
+              <span className="material-symbols-outlined text-3xl text-slate-400 mb-2 block">upload_file</span>
+              <p className="text-sm text-slate-600 font-bold">Select resolution photo</p>
+              <p className="text-xs text-slate-400 mt-1">Image size up to 5MB</p>
+            </div>
+            <input 
+              id="res-file-input"
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length > 0) {
+                  setResolutionFiles(files);
+                  setResolutionPreviews(files.map(f => URL.createObjectURL(f)));
+                }
+              }}
+            />
+
+            {/* Previews */}
+            {resolutionPreviews.length > 0 && (
+              <div className="relative aspect-[4/3] w-full rounded-2xl overflow-hidden mt-2 bg-slate-50 border border-slate-100">
+                <img src={resolutionPreviews[0]} alt="Resolution Proof" className="w-full h-full object-cover" />
+                <button 
+                  onClick={() => {
+                    setResolutionFiles([]);
+                    setResolutionPreviews([]);
+                  }}
+                  className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600"
+                >
+                  <span className="material-symbols-outlined text-sm">delete</span>
+                </button>
+              </div>
+            )}
+
+            {/* AI Rejection Feedback */}
+            {verificationFeedback && (
+              <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs leading-relaxed font-semibold">
+                ⚠️ AI Verification Failed: "{verificationFeedback}"
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setResolvingIssueId(null);
+                  setResolutionFiles([]);
+                  setResolutionPreviews([]);
+                  setVerificationFeedback('');
+                }}
+                className="px-5 py-2.5 bg-slate-100 text-slate-600 font-bold text-xs rounded-xl hover:bg-slate-200 transition-colors cursor-pointer border-0"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={resolutionFiles.length === 0 || isResolving || resolutionUploading}
+                onClick={async () => {
+                  setIsResolving(true);
+                  setVerificationFeedback('');
+                  const tId = toast.loading('Uploading proof and verifying with Gemini...');
+                  
+                  try {
+                    // Upload proof image
+                    setResolutionUploading(true);
+                    const authRes = await api.get('/imagekit/auth');
+                    const authParams = authRes.data?.data;
+                    
+                    const file = resolutionFiles[0];
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('fileName', `resolved_${Date.now()}_${file.name}`);
+                    formData.append('publicKey', 'public_O6ij2BGxhFwuRCv75GQfnAIn4jw=');
+                    formData.append('signature', authParams.signature);
+                    formData.append('expire', String(authParams.expire));
+                    formData.append('token', authParams.token);
+
+                    const uploadRes = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+                      method: 'POST',
+                      body: formData,
+                    });
+
+                    if (!uploadRes.ok) throw new Error('Proof photo upload failed');
+                    const uploadResult = await uploadRes.json();
+                    const proofUrl = uploadResult.url;
+                    setResolutionUploading(false);
+
+                    // Call backend verification
+                    toast.loading('Gemini is inspecting the resolution...', { id: tId });
+                    const res = await api.post('/ai/verify-resolution', {
+                      issueId: resolvingIssueId,
+                      resolutionImages: [proofUrl],
+                    });
+
+                    const data = res.data?.data;
+                    if (data?.verified) {
+                      toast.success(`Success! Points earned: +${data.pointsEarned}. AI verification score: ${data.qualityScore}/10`, { id: tId, duration: 6000 });
+                      setResolvingIssueId(null);
+                      setResolutionFiles([]);
+                      setResolutionPreviews([]);
+                      fetchData();
+                    } else {
+                      toast.error('AI Verification failed!', { id: tId });
+                      setVerificationFeedback(data?.reasoning || 'Proof does not match/resolve the issue.');
+                    }
+                  } catch (err: any) {
+                    console.error(err);
+                    toast.error(err?.response?.data?.message || 'Verification process failed', { id: tId });
+                  } finally {
+                    setIsResolving(false);
+                    setResolutionUploading(false);
+                  }
+                }}
+                className="px-5 py-2.5 bg-primary text-on-primary font-bold text-xs rounded-xl hover:bg-primary/90 transition-colors shadow flex items-center gap-2 disabled:opacity-50 cursor-pointer border-0"
+              >
+                {isResolving ? 'Verifying...' : 'Submit Proof'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

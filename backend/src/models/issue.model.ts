@@ -26,6 +26,9 @@ export interface IIssue {
     downvotes: number;
     resolvedBy?: Types.ObjectId;
     resolvedAt?: Date;
+    resolutionImages?: string[];
+    resolutionFeedback?: string;
+    resolutionScore?: number;
 }
 
 const issueSchema = new Schema<IIssue>(
@@ -100,6 +103,16 @@ const issueSchema = new Schema<IIssue>(
         },
         resolvedAt: {
             type: Date,
+        },
+        resolutionImages: {
+            type: [String],
+            default: [],
+        },
+        resolutionFeedback: {
+            type: String,
+        },
+        resolutionScore: {
+            type: Number,
         },
     },
     { timestamps: true }

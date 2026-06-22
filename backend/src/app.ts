@@ -9,6 +9,7 @@ import { issueRouter } from "./routes/issue.route";
 import { authorityRouter } from "./routes/authority.route";
 import { dataRouter } from "./routes/data.route";
 import { imagekitRouter } from "./routes/imagekit.route";
+import { aiRouter } from "./routes/ai.route";
 import { ApiError } from "./utils/ApiError";
 
 const app = express();
@@ -59,6 +60,7 @@ app.use("/issues", issueRouter);
 app.use("/authority", authorityRouter);
 app.use("/data", dataRouter);
 app.use("/imagekit", imagekitRouter);
+app.use("/ai", aiRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof ApiError) {

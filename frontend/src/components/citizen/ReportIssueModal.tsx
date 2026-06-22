@@ -45,6 +45,13 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // AI-powered state variables
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiSeverity, setAiSeverity] = useState('');
+  const [aiReasoning, setAiReasoning] = useState('');
+  const [duplicateInfo, setDuplicateInfo] = useState<{ id: string; reasoning: string } | null>(null);
+  const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -163,11 +170,97 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
       return uploadedUrls;
     } catch (error) {
       console.error('Image upload error:', error);
-      // Return empty array so submission can proceed without images
       toast.error('Image upload failed, submitting without images');
       return [];
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleAIAnalyze = async () => {
+    if (!description.trim() && imageFiles.length === 0) {
+      toast.error('Please enter a description or upload a photo first');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    const toastId = toast.loading('Gemini is analyzing your issue...');
+
+    try {
+      // Upload images first if present so Gemini can analyze them
+      let urls: string[] = [];
+      if (imageFiles.length > 0) {
+        toast.loading('Uploading photos for AI inspection...', { id: toastId });
+        urls = await uploadImages();
+      }
+
+      toast.loading('AI is classifying and enriching details...', { id: toastId });
+      const res = await api.post('/ai/analyze-issue', {
+        description,
+        imageUrls: urls,
+      });
+
+      const data = res.data?.data;
+      if (data) {
+        if (!data.isRealIssue) {
+          toast.error('AI Warning: Gemini flags this as not a valid public infrastructure issue!', { id: toastId, duration: 5000 });
+        } else {
+          toast.success('AI analysis complete! Auto-filled fields.', { id: toastId });
+        }
+        
+        setTitle(data.title);
+        setCategory(data.category);
+        setDescription(data.enrichedDescription);
+        setAiSeverity(data.severity);
+        setAiReasoning(data.reasoning);
+        setUploadedImageUrls(urls);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.response?.data?.message || 'Failed to analyze with AI', { id: toastId });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const submitIssue = async (imageUrls: string[]) => {
+    const payload = {
+      title,
+      description,
+      category,
+      images: imageUrls,
+      latitude: latitude || 28.6139,
+      longitude: longitude || 77.2090,
+      wardId,
+      departmentId,
+    };
+
+    await api.post('/issues', payload);
+    toast.success('Issue reported successfully!');
+    
+    // Reset form
+    setTitle('');
+    setDescription('');
+    setCategory('road');
+    setImageFiles([]);
+    setImagePreviews([]);
+    setImages([]);
+    setAiSeverity('');
+    setAiReasoning('');
+    setDuplicateInfo(null);
+    setUploadedImageUrls([]);
+    
+    onSuccess();
+  };
+
+  const handleForceSubmit = async () => {
+    setIsLoading(true);
+    try {
+      await submitIssue(uploadedImageUrls);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || 'Failed to submit issue');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -180,35 +273,34 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
     setIsLoading(true);
 
     try {
-      // Upload images first
-      const imageUrls = await uploadImages();
+      // 1. Upload images
+      const imageUrls = imageFiles.length > 0 && uploadedImageUrls.length === 0 
+        ? await uploadImages() 
+        : uploadedImageUrls;
 
-      const payload = {
+      // 2. Perform duplicate check
+      const dupRes = await api.post('/ai/check-duplicate', {
         title,
         description,
         category,
-        images: imageUrls,
         latitude: latitude || 28.6139,
         longitude: longitude || 77.2090,
-        wardId,
-        departmentId,
-      };
+      });
 
-      await api.post('/issues', payload);
-      toast.success('Issue reported successfully!');
-      
-      // Reset form
-      setTitle('');
-      setDescription('');
-      setCategory('road');
-      setImageFiles([]);
-      setImagePreviews([]);
-      setImages([]);
-      
-      onSuccess();
+      const duplicateData = dupRes.data?.data;
+      if (duplicateData?.isDuplicate) {
+        setDuplicateInfo({
+          id: duplicateData.duplicateIssueId,
+          reasoning: duplicateData.reasoning,
+        });
+        setUploadedImageUrls(imageUrls);
+        setIsLoading(false);
+        return;
+      }
+
+      await submitIssue(imageUrls);
     } catch (error: any) {
       toast.error(error?.response?.data?.message || 'Failed to report issue');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -328,7 +420,79 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
               rows={3}
               className="w-full px-4 py-3 bg-surface-container-low border-2 border-transparent focus:border-primary rounded-xl outline-none transition-colors resize-none"
             ></textarea>
+            
+            <button
+              type="button"
+              onClick={handleAIAnalyze}
+              disabled={isAnalyzing || uploading}
+              className="w-full mt-3 py-3 bg-[#0f172a] hover:bg-[#1e293b] text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+            >
+              {isAnalyzing ? (
+                <>
+                  <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                  Gemini is analyzing...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-sm">auto_awesome</span>
+                  ✨ Autofill & Enrich with Gemini AI
+                </>
+              )}
+            </button>
           </div>
+
+          {/* AI Feedback / Severity */}
+          {aiSeverity && (
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl text-xs font-semibold flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-blue-800 flex items-center gap-1 text-sm">
+                  <span className="material-symbols-outlined text-base">info</span> AI Analysis Insights:
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-black text-white ${
+                  aiSeverity === 'critical' ? 'bg-red-500' :
+                  aiSeverity === 'medium' ? 'bg-amber-500' :
+                  'bg-emerald-500'
+                }`}>
+                  {aiSeverity} Urgency
+                </span>
+              </div>
+              <p className="text-blue-900 font-normal leading-relaxed text-sm">"{aiReasoning}"</p>
+            </div>
+          )}
+
+          {/* Duplicate warnings */}
+          {duplicateInfo && (
+            <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex flex-col gap-3">
+              <p className="text-sm text-amber-800 font-bold flex items-center gap-1">
+                <span className="material-symbols-outlined text-base">warning</span> Duplicate Issue Alert
+              </p>
+              <p className="text-xs text-amber-700 leading-relaxed font-medium">{duplicateInfo.reasoning}</p>
+              <div className="flex gap-3 mt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    api.post(`/issues/${duplicateInfo.id}/vote`, { vote: 'upvote' })
+                      .then(() => {
+                        toast.success("Successfully upvoted the existing issue!");
+                        onClose();
+                      })
+                      .catch(() => toast.error("Failed to upvote"));
+                  }}
+                  className="px-4 py-2.5 bg-amber-600 text-white font-bold text-xs rounded-xl hover:bg-amber-700 transition-colors shadow-sm cursor-pointer"
+                >
+                  👍 Upvote Existing & Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleForceSubmit}
+                  disabled={isLoading}
+                  className="px-4 py-2.5 bg-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-300 transition-colors cursor-pointer"
+                >
+                  Submit Anyway
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Image Upload */}
           <div>

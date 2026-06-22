@@ -4,6 +4,15 @@ import { Link } from 'react-router-dom';
 export const CitizenNavBar = () => {
  const user = useAuthStore((state) => state.user);
 
+ const getUserBadge = (points: number = 0) => {
+   if (points >= 300) return { title: 'Community Hero', icon: '👑', color: 'bg-amber-100 text-amber-800 border-amber-300' };
+   if (points >= 150) return { title: 'Sanitation Savior', icon: '🔮', color: 'bg-purple-100 text-purple-800 border-purple-300' };
+   if (points >= 50) return { title: 'Pothole Patrol', icon: '⚔️', color: 'bg-orange-100 text-orange-800 border-orange-300' };
+   return { title: 'Civic Scout', icon: '🛡️', color: 'bg-slate-100 text-slate-800 border-slate-300' };
+ };
+
+ const badge = getUserBadge(user?.points);
+
  return (
  <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-xl shadow-[0_24px_48px_-12px_rgba(0,30,64,0.08)]">
  <div className="flex justify-between items-center px-8 h-20 w-full max-w-screen-2xl mx-auto font-['Manrope'] tracking-tight">
@@ -36,15 +45,24 @@ export const CitizenNavBar = () => {
  <button className="p-2 text-primary hover:bg-slate-50 rounded-full transition-all">
  <span className="material-symbols-outlined">notifications</span>
  </button>
- <div className="flex items-center gap-2 p-1 pl-3 rounded-full border border-outline-variant/20 hover:bg-slate-50 cursor-pointer" onClick={() => useAuthStore.getState().logout()}>
- <span className="text-sm font-semibold text-primary hidden sm:inline-block">
+ <div 
+ className="flex items-center gap-2 p-1.5 pl-4 pr-3 rounded-full border border-outline-variant/20 hover:bg-slate-50 cursor-pointer" 
+ onClick={() => useAuthStore.getState().logout()}
+ >
+ <div className="flex flex-col items-end sm:mr-1">
+ <span className="text-xs font-black text-primary leading-none">
  {user ? (user.name || user.email.split('@')[0]) : 'Citizen'}
  </span>
- <span className="material-symbols-outlined text-primary">logout</span> 
+ {user && (
+ <span className={`text-[9px] font-bold ${badge.color} px-1.5 py-0.5 rounded-full mt-0.5 border flex items-center gap-0.5`}>
+ {badge.icon} {badge.title} ({user.points || 0} pts)
+ </span>
+ )}
+ </div>
+ <span className="material-symbols-outlined text-primary text-xl">logout</span> 
  </div>
  </div>
  </div>
  </nav>
  );
 };
-
