@@ -494,38 +494,42 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({ isOpen, onCl
             </div>
           )}
 
-          {/* Image Upload */}
+          {/* Image & Video Upload */}
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">Photos (optional, max 4)</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2">Photos & Videos (optional, max 4)</label>
             <div 
               className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-all"
               onClick={() => fileInputRef.current?.click()}
             >
-              <span className="material-symbols-outlined text-3xl text-slate-400 mb-2 block">add_photo_alternate</span>
-              <p className="text-sm text-slate-500 font-medium">Click to add photos</p>
-              <p className="text-xs text-slate-400 mt-1">JPG, PNG up to 5MB each</p>
+              <span className="material-symbols-outlined text-3xl text-slate-400 mb-2 block">perm_media</span>
+              <p className="text-sm text-slate-500 font-medium">Click to add photos or videos</p>
+              <p className="text-xs text-slate-400 mt-1">Images & Videos up to 10MB each</p>
             </div>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*"
               multiple
               className="hidden"
               onChange={handleFileSelect}
             />
             
-            {/* Image Previews */}
+            {/* Media Previews */}
             {imagePreviews.length > 0 && (
               <div className="grid grid-cols-4 gap-3 mt-4">
                 {imagePreviews.map((preview, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden group">
-                    <img src={preview} alt="" className="w-full h-full object-cover" />
+                  <div key={idx} className="relative aspect-square rounded-xl overflow-hidden group border border-slate-100 bg-slate-50">
+                    {imageFiles[idx]?.type?.startsWith('video') ? (
+                      <video src={preview} className="w-full h-full object-cover" muted playsInline />
+                    ) : (
+                      <img src={preview} alt="" className="w-full h-full object-cover" />
+                    )}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
-                      className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow"
                     >
-                      <span className="material-symbols-outlined text-sm">close</span>
+                      <span className="material-symbols-outlined text-xs">close</span>
                     </button>
                   </div>
                 ))}
