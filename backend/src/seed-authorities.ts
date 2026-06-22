@@ -84,18 +84,31 @@ const seed = async () => {
     try {
         await connectDB();
 
+        console.log("🧹 Cleaning up existing data...");
+        await pool.query("TRUNCATE TABLE comments, votes, issues, users, departments, wards CASCADE;");
+        console.log("🧹 Database cleaned.");
+
+        const categoryToDeptName: Record<string, string> = {
+            road: 'Roads & Highways',
+            garbage: 'Sanitation',
+            sewage: 'Water Supply',
+            water: 'Water Supply',
+            electricity: 'Power',
+        };
+
         // 1. Create/find Departments
         const departmentMap: Record<string, string> = {};
         for (const cat of categories) {
-            let res = await pool.query("SELECT id FROM departments WHERE name = $1", [cat]);
+            const deptName = categoryToDeptName[cat];
+            let res = await pool.query("SELECT id FROM departments WHERE name = $1", [deptName]);
             let id = res.rows[0]?.id;
             if (!id) {
                 res = await pool.query(
                     "INSERT INTO departments (name, description) VALUES ($1, $2) RETURNING id",
-                    [cat, `${cat.charAt(0).toUpperCase() + cat.slice(1)} Department`]
+                    [deptName, `${deptName} Department`]
                 );
                 id = res.rows[0].id;
-                console.log(`✅ Created department: ${cat}`);
+                console.log(`✅ Created department: ${deptName}`);
             }
             departmentMap[cat] = id;
         }
