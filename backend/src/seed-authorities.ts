@@ -1,10 +1,6 @@
-import mongoose from "mongoose";
 import dotenv from "dotenv";
-import { User } from "./models/user.model";
-import { Department } from "./models/department.model";
-import { Ward } from "./models/ward.model";
-import { Issue } from "./models/issue.model";
-import { connectDB } from "./db/db";
+import bcrypt from "bcrypt";
+import { pool, connectDB } from "./db/pg";
 
 dotenv.config();
 
@@ -89,36 +85,42 @@ const seed = async () => {
         await connectDB();
 
         // 1. Create/find Departments
-        const departmentMap: Record<string, mongoose.Types.ObjectId> = {};
+        const departmentMap: Record<string, string> = {};
         for (const cat of categories) {
-            let dept = await Department.findOne({ name: cat });
-            if (!dept) {
-                dept = await Department.create({
-                    name: cat,
-                    description: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Department`,
-                });
+            let res = await pool.query("SELECT id FROM departments WHERE name = $1", [cat]);
+            let id = res.rows[0]?.id;
+            if (!id) {
+                res = await pool.query(
+                    "INSERT INTO departments (name, description) VALUES ($1, $2) RETURNING id",
+                    [cat, `${cat.charAt(0).toUpperCase() + cat.slice(1)} Department`]
+                );
+                id = res.rows[0].id;
                 console.log(`✅ Created department: ${cat}`);
             }
-            departmentMap[cat] = dept._id as mongoose.Types.ObjectId;
+            departmentMap[cat] = id;
         }
 
         // 2. Create/find Wards for Dwarka and Burari
-        const wards: { name: string; wardNumber: number; city: string; state: string }[] = [
+        const wards = [
             { name: "Dwarka", wardNumber: 1, city: "New Delhi", state: "Delhi" },
             { name: "Burari", wardNumber: 2, city: "New Delhi", state: "Delhi" },
         ];
-        const wardMap: Record<string, mongoose.Types.ObjectId> = {};
+        const wardMap: Record<string, string> = {};
         for (const w of wards) {
-            let ward = await Ward.findOne({ name: w.name, city: w.city });
-            if (!ward) {
-                ward = await Ward.create(w);
+            let res = await pool.query("SELECT id FROM wards WHERE name = $1 AND city = $2", [w.name, w.city]);
+            let id = res.rows[0]?.id;
+            if (!id) {
+                res = await pool.query(
+                    "INSERT INTO wards (name, ward_number, city, state) VALUES ($1, $2, $3, $4) RETURNING id",
+                    [w.name, w.wardNumber, w.city, w.state]
+                );
+                id = res.rows[0].id;
                 console.log(`✅ Created ward: ${w.name}`);
             }
-            wardMap[w.name] = ward._id as mongoose.Types.ObjectId;
+            wardMap[w.name] = id;
         }
 
         // 3. Create Authority users – split across Dwarka/Burari
-        //    road, garbage, sewage → Dwarka  |  water, electricity → Burari
         const authorityWardAssignment: Record<string, string> = {
             road: "Dwarka",
             garbage: "Dwarka",
@@ -127,47 +129,53 @@ const seed = async () => {
             electricity: "Burari",
         };
 
-        const authorityUserMap: Record<string, mongoose.Types.ObjectId> = {};
         for (const cat of categories) {
             const email = `auth.${cat}@janseva.com`;
-            let user = await User.findOne({ email });
-            if (!user) {
-                user = await User.create({
-                    name: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Authority`,
-                    email,
-                    phone: `987654320${categories.indexOf(cat)}`,
-                    password: "test123",
-                    role: "authority",
-                    departmentId: departmentMap[cat],
-                    wardId: wardMap[authorityWardAssignment[cat]],
-                });
+            let res = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+            let id = res.rows[0]?.id;
+            if (!id) {
+                const hashedPassword = await bcrypt.hash("test123", 10);
+                await pool.query(
+                    `INSERT INTO users (name, email, phone, password, role, department_id, ward_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [
+                        `${cat.charAt(0).toUpperCase() + cat.slice(1)} Authority`,
+                        email,
+                        `987654320${categories.indexOf(cat)}`,
+                        hashedPassword,
+                        "authority",
+                        departmentMap[cat],
+                        wardMap[authorityWardAssignment[cat]]
+                    ]
+                );
                 console.log(`✅ Created authority: ${email} (ward: ${authorityWardAssignment[cat]})`);
             } else {
                 // Update existing authority with correct dept/ward
-                user.departmentId = departmentMap[cat];
-                user.wardId = wardMap[authorityWardAssignment[cat]];
-                await user.save();
+                await pool.query(
+                    "UPDATE users SET department_id = $1, ward_id = $2 WHERE id = $3",
+                    [departmentMap[cat], wardMap[authorityWardAssignment[cat]], id]
+                );
                 console.log(`🔄 Updated authority: ${email} (ward: ${authorityWardAssignment[cat]})`);
             }
-            authorityUserMap[cat] = user._id as mongoose.Types.ObjectId;
         }
 
         // 4. Create a citizen user for reporting
-        let citizen = await User.findOne({ email: "citizen@janseva.com" });
-        if (!citizen) {
-            citizen = await User.create({
-                name: "Test Citizen",
-                email: "citizen@janseva.com",
-                phone: "9876543210",
-                password: "test123",
-                role: "citizen",
-                wardId: wardMap["Dwarka"],
-            });
+        let citizenRes = await pool.query("SELECT id FROM users WHERE email = $1", ["citizen@janseva.com"]);
+        let citizenId = citizenRes.rows[0]?.id;
+        if (!citizenId) {
+            const hashedPassword = await bcrypt.hash("test123", 10);
+            const insertCitizenRes = await pool.query(
+                `INSERT INTO users (name, email, phone, password, role, ward_id)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                ["Test Citizen", "citizen@janseva.com", "9876543210", hashedPassword, "citizen", wardMap["Dwarka"]]
+            );
+            citizenId = insertCitizenRes.rows[0].id;
             console.log("✅ Created test citizen: citizen@janseva.com");
         }
 
         // 5. Seed issues – mix of Dwarka and Burari locations for each category
-        const existingIssueCount = await Issue.countDocuments();
+        const countRes = await pool.query("SELECT COUNT(*)::int FROM issues");
+        const existingIssueCount = countRes.rows[0].count;
         if (existingIssueCount > 0) {
             console.log(`⏭️  Skipping issue seeding (${existingIssueCount} issues already exist)`);
         } else {
@@ -179,26 +187,27 @@ const seed = async () => {
                 const descriptions = issueDescriptions[cat];
 
                 for (let i = 0; i < titles.length; i++) {
-                    // Spread issues across both Dwarka and Burari
                     const loc = allLocations[issueIndex % allLocations.length];
                     const wardName = loc.lat > 28.7 ? "Burari" : "Dwarka";
 
-                    await Issue.create({
-                        title: titles[i],
-                        description: descriptions[i],
-                        category: cat,
-                        images: [],
-                        location: {
-                            type: "Point",
-                            coordinates: [loc.lng, loc.lat], // GeoJSON: [lng, lat]
-                        },
-                        wardId: wardMap[wardName],
-                        departmentId: departmentMap[cat],
-                        reportedBy: citizen!._id,
-                        status: "open",
-                        upvotes: Math.floor(Math.random() * 25),
-                        downvotes: Math.floor(Math.random() * 3),
-                    });
+                    await pool.query(
+                        `INSERT INTO issues (title, description, category, images, latitude, longitude, ward_id, department_id, reported_by, status, upvotes, downvotes)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                        [
+                            titles[i],
+                            descriptions[i],
+                            cat,
+                            [],
+                            loc.lat,
+                            loc.lng,
+                            wardMap[wardName],
+                            departmentMap[cat],
+                            citizenId,
+                            "open",
+                            Math.floor(Math.random() * 25),
+                            Math.floor(Math.random() * 3)
+                        ]
+                    );
 
                     issueIndex++;
                 }

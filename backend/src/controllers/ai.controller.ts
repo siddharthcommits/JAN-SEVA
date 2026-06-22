@@ -1,11 +1,8 @@
-import mongoose from "mongoose";
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
-import { Issue } from "../models/issue.model";
-import { User } from "../models/user.model";
-import { Ward } from "../models/ward.model";
+import { pool } from "../db/pg";
 import {
     analyzeIssueWithAI,
     detectDuplicateIssue,
@@ -13,8 +10,9 @@ import {
     getWardInsightsWithAI,
 } from "../utils/gemini";
 
-const ensureObjectId = (id: string, fieldName: string) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+const ensureUuid = (id: string, fieldName: string) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(id)) {
         throw new ApiError(400, `${fieldName} is invalid`);
     }
 };
@@ -57,22 +55,31 @@ export const checkDuplicateController = asyncHandler(async (req: Request, res: R
         throw new ApiError(400, "latitude and longitude must be valid numbers");
     }
 
-    // Find all open issues within a 500 meters radius
-    const nearbyRawIssues = await Issue.find({
-        location: {
-            $nearSphere: {
-                $geometry: {
-                    type: "Point",
-                    coordinates: [lng, lat],
-                },
-                $maxDistance: 500, // 500 meters
-            },
-        },
-        status: "open",
-    }).limit(10); // Limit to top 10 nearby open issues
+    // Find all open issues within a 500 meters radius using SQL Haversine formula
+    const query = `
+        SELECT id AS "_id", title, description, category,
+               (6371000 * acos(
+                    least(1.0, greatest(-1.0, 
+                        cos(radians($1)) * cos(radians(latitude)) * cos(radians(longitude) - radians($2)) + 
+                        sin(radians($1)) * sin(radians(latitude))
+                    ))
+               )) AS distance
+        FROM issues
+        WHERE status = 'open'
+        GROUP BY id
+        HAVING (6371000 * acos(
+                    least(1.0, greatest(-1.0, 
+                        cos(radians($1)) * cos(radians(latitude)) * cos(radians(longitude) - radians($2)) + 
+                        sin(radians($1)) * sin(radians(latitude))
+                    ))
+               )) <= 500
+        LIMIT 10
+    `;
 
-    const nearbyIssues = nearbyRawIssues.map(i => ({
-        id: (i._id as mongoose.Types.ObjectId).toString(),
+    const nearbyRawIssues = await pool.query(query, [lat, lng]);
+
+    const nearbyIssues = nearbyRawIssues.rows.map(i => ({
+        id: i._id,
         title: i.title,
         description: i.description,
         category: i.category,
@@ -112,13 +119,19 @@ export const verifyResolutionController = asyncHandler(async (req: Request, res:
         throw new ApiError(400, "issueId is required");
     }
 
-    ensureObjectId(issueId, "issueId");
+    ensureUuid(issueId, "issueId");
 
     if (resolutionImages.length === 0) {
         throw new ApiError(400, "At least one resolution proof image URL is required");
     }
 
-    const issue = await Issue.findById(issueId);
+    // Fetch issue details
+    const issueResult = await pool.query(
+        "SELECT id, description, images, status, upvotes FROM issues WHERE id = $1",
+        [issueId]
+    );
+
+    const issue = issueResult.rows[0];
     if (!issue) {
         throw new ApiError(404, "Issue not found");
     }
@@ -131,7 +144,7 @@ export const verifyResolutionController = asyncHandler(async (req: Request, res:
         // Call Gemini to verify resolution proof images against original issue
         const result = await verifyResolutionWithAI(
             issue.description,
-            issue.images, // original images
+            issue.images || [], // original images
             resolutionImages
         );
 
@@ -149,43 +162,53 @@ export const verifyResolutionController = asyncHandler(async (req: Request, res:
             );
         }
 
-        // Issue is verified resolved. Update fields
-        issue.status = "resolved";
-        issue.resolvedBy = new mongoose.Types.ObjectId(req.user.id);
-        issue.resolvedAt = new Date();
-        issue.resolutionImages = resolutionImages;
-        issue.resolutionFeedback = result.reasoning;
-        issue.resolutionScore = result.qualityScore;
-        await issue.save();
-
         // Calculate points based on AI quality score and upvotes
-        // Formula: Base 20 points + (qualityScore * 5) + (upvotes * 2)
         const basePoints = 20;
         const qualityPoints = result.qualityScore * 5;
-        const upvoteBonus = issue.upvotes * 2;
+        const upvoteBonus = (issue.upvotes || 0) * 2;
         const totalPointsEarned = basePoints + qualityPoints + upvoteBonus;
 
-        // Reward the authority user who resolved it
-        await User.findByIdAndUpdate(req.user.id, {
-            $inc: {
-                points: totalPointsEarned,
-                issuesResolved: 1,
-            },
-        });
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
 
-        return res.status(200).json(
-            new ApiResponse(
-                200,
-                {
-                    verified: true,
-                    issue,
-                    pointsEarned: totalPointsEarned,
-                    qualityScore: result.qualityScore,
-                    feedback: result.reasoning,
-                },
-                "Issue resolved and verified by AI successfully!"
-            )
-        );
+            // Issue is verified resolved. Update fields in Postgres
+            const resolvedAt = new Date();
+            const updateIssueResult = await client.query(
+                `UPDATE issues
+                 SET status = 'resolved', resolved_by = $1, resolved_at = $2, resolution_images = $3, resolution_feedback = $4, resolution_score = $5
+                 WHERE id = $6
+                 RETURNING id AS "_id", status, resolved_by AS "resolvedBy", resolved_at AS "resolvedAt"`,
+                [req.user.id, resolvedAt, resolutionImages, result.reasoning, result.qualityScore, issueId]
+            );
+
+            // Reward the authority user who resolved it
+            await client.query(
+                "UPDATE users SET points = points + $1, issues_resolved = issues_resolved + 1 WHERE id = $2",
+                [totalPointsEarned, req.user.id]
+            );
+
+            await client.query("COMMIT");
+
+            return res.status(200).json(
+                new ApiResponse(
+                    200,
+                    {
+                        verified: true,
+                        issue: updateIssueResult.rows[0],
+                        pointsEarned: totalPointsEarned,
+                        qualityScore: result.qualityScore,
+                        feedback: result.reasoning,
+                    },
+                    "Issue resolved and verified by AI successfully!"
+                )
+            );
+        } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+        } finally {
+            client.release();
+        }
     } catch (error: any) {
         console.error("AI Resolution verification error:", error);
         throw new ApiError(500, error.message || "Failed to verify resolution with AI");
@@ -210,17 +233,26 @@ export const getWardInsightsController = asyncHandler(async (req: Request, res: 
         throw new ApiError(400, "wardId is required (no ward associated with this user)");
     }
 
-    ensureObjectId(wardId, "wardId");
+    ensureUuid(wardId, "wardId");
 
-    const ward = await Ward.findById(wardId);
+    // Fetch Ward details
+    const wardResult = await pool.query(
+        'SELECT id, name, ward_number AS "wardNumber", city, state FROM wards WHERE id = $1',
+        [wardId]
+    );
+
+    const ward = wardResult.rows[0];
     if (!ward) {
         throw new ApiError(404, "Ward not found");
     }
 
     // Fetch all issues in the ward
-    const rawIssues = await Issue.find({ wardId });
+    const issuesResult = await pool.query(
+        'SELECT category, status, upvotes, description, created_at AS "createdAt" FROM issues WHERE ward_id = $1',
+        [wardId]
+    );
 
-    if (rawIssues.length === 0) {
+    if (issuesResult.rows.length === 0) {
         return res.status(200).json(
             new ApiResponse(
                 200,
@@ -235,12 +267,12 @@ export const getWardInsightsController = asyncHandler(async (req: Request, res: 
         );
     }
 
-    const issues = rawIssues.map(i => ({
+    const issues = issuesResult.rows.map(i => ({
         category: i.category,
         status: i.status,
         upvotes: i.upvotes,
         description: i.description,
-        createdAt: (i as any).createdAt,
+        createdAt: i.createdAt,
     }));
 
     try {

@@ -1,19 +1,13 @@
-import mongoose from "mongoose";
 import { Request, Response } from "express";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
-import { Issue } from "../models/issue.model";
-import { Vote } from "../models/vote.model";
-import { Comment } from "../models/comment.model";
-import { User } from "../models/user.model";
-import { Ward } from "../models/ward.model";
-import { Department } from "../models/department.model";
+import { pool } from "../db/pg";
 
-const validCategories = ["road", "garbage", "sewage", "water", "electricity"];
-
-const ensureObjectId = (id: string, fieldName: string) => {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+const ensureUuid = (id: string, fieldName: string) => {
+    // Simple UUID format validation
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(id)) {
         throw new ApiError(400, `${fieldName} is invalid`);
     }
 };
@@ -38,12 +32,13 @@ export const createIssue = asyncHandler(async (req: Request, res: Response) => {
         throw new ApiError(400, "title, description, category, latitude, longitude, wardId and departmentId are required");
     }
 
+    const validCategories = ["road", "garbage", "sewage", "water", "electricity"];
     if (!validCategories.includes(category)) {
         throw new ApiError(400, "Invalid category");
     }
 
-    ensureObjectId(wardId, "wardId");
-    ensureObjectId(departmentId, "departmentId");
+    ensureUuid(wardId, "wardId");
+    ensureUuid(departmentId, "departmentId");
 
     const lat = Number(latitude);
     const lng = Number(longitude);
@@ -52,22 +47,14 @@ export const createIssue = asyncHandler(async (req: Request, res: Response) => {
         throw new ApiError(400, "latitude and longitude must be valid numbers");
     }
 
-    const issue = await Issue.create({
-        title,
-        description,
-        category,
-        images,
-        location: {
-            type: "Point",
-            coordinates: [lng, lat],
-        },
-        wardId,
-        departmentId,
-        reportedBy: req.user.id,
-        status: "open",
-        upvotes: 0,
-        downvotes: 0,
-    });
+    const result = await pool.query(
+        `INSERT INTO issues (title, description, category, images, latitude, longitude, ward_id, department_id, reported_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id AS "_id", title, description, category, images, latitude, longitude, ward_id AS "wardId", department_id AS "departmentId", reported_by AS "reportedBy", status, upvotes, downvotes, created_at`,
+        [title, description, category, images, lat, lng, wardId, departmentId, req.user.id]
+    );
+
+    const issue = result.rows[0];
 
     return res
         .status(201)
@@ -75,84 +62,175 @@ export const createIssue = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getIssues = asyncHandler(async (req: Request, res: Response) => {
-    const { category, ward, wardId, department, departmentId, status, sort, limit } = req.query;
+    const { category, wardId, departmentId, status, sort, limit } = req.query;
 
-    const filters: Record<string, unknown> = {};
+    const queryParams: any[] = [];
+    const filterClauses: string[] = [];
 
     if (category) {
-        filters.category = category;
+        queryParams.push(category);
+        filterClauses.push(`i.category = $${queryParams.length}`);
     }
-    if (ward || wardId) {
-        const wardValue = (ward || wardId) as string;
-        ensureObjectId(wardValue, "ward");
-        filters.wardId = wardValue;
+    if (wardId) {
+        ensureUuid(wardId as string, "wardId");
+        queryParams.push(wardId);
+        filterClauses.push(`i.ward_id = $${queryParams.length}`);
     }
-    if (department || departmentId) {
-        const departmentValue = (department || departmentId) as string;
-        ensureObjectId(departmentValue, "department");
-        filters.departmentId = departmentValue;
+    if (departmentId) {
+        ensureUuid(departmentId as string, "departmentId");
+        queryParams.push(departmentId);
+        filterClauses.push(`i.department_id = $${queryParams.length}`);
     }
     if (status) {
-        filters.status = status;
+        queryParams.push(status);
+        filterClauses.push(`i.status = $${queryParams.length}`);
     }
 
-    let sortOption: Record<string, 1 | -1> = { createdAt: -1 };
+    const whereClause = filterClauses.length > 0 ? "WHERE " + filterClauses.join(" AND ") : "";
+
+    let orderClause = "ORDER BY i.created_at DESC";
     if (sort === "upvotes") {
-        sortOption = { upvotes: -1 };
+        orderClause = "ORDER BY i.upvotes DESC, i.created_at DESC";
     }
 
-    let query = Issue.find(filters)
-        .populate("reportedBy", "name email role avatar")
-        .populate("wardId", "name wardNumber city state")
-        .populate("departmentId", "name")
-        .sort(sortOption);
-
+    let limitClause = "";
     if (limit) {
         const limitNum = parseInt(limit as string, 10);
         if (!Number.isNaN(limitNum) && limitNum > 0) {
-            query = query.limit(limitNum);
+            queryParams.push(limitNum);
+            limitClause = `LIMIT $${queryParams.length}`;
         }
     }
 
-    const issues = await query;
+    const query = `
+        SELECT i.id AS "_id", i.title, i.description, i.category, i.images, i.latitude, i.longitude, i.status, i.upvotes, i.downvotes, i.created_at,
+               u.id AS user_id, u.name AS user_name, u.email AS user_email, u.role AS user_role, u.avatar AS user_avatar,
+               w.id AS ward_uuid, w.name AS ward_name, w.ward_number, w.city, w.state,
+               d.id AS dept_uuid, d.name AS dept_name,
+               (SELECT COUNT(*)::int FROM comments c WHERE c.issue_id = i.id) AS comment_count
+        FROM issues i
+        LEFT JOIN users u ON i.reported_by = u.id
+        LEFT JOIN wards w ON i.ward_id = w.id
+        LEFT JOIN departments d ON i.department_id = d.id
+        ${whereClause}
+        ${orderClause}
+        ${limitClause}
+    `;
 
-    // Attach comment counts
-    const issueIds = issues.map((i) => i._id);
-    const commentCounts = await Comment.aggregate([
-        { $match: { issueId: { $in: issueIds } } },
-        { $group: { _id: "$issueId", count: { $sum: 1 } } },
-    ]);
-    const countMap = new Map(commentCounts.map((c) => [c._id.toString(), c.count]));
+    const result = await pool.query(query, queryParams);
 
-    const issuesWithComments = issues.map((issue) => {
-        const obj = issue.toObject();
-        (obj as any).commentCount = countMap.get(issue._id.toString()) || 0;
-        return obj;
-    });
+    const formattedIssues = result.rows.map(row => ({
+        _id: row._id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        images: row.images || [],
+        location: {
+            type: "Point",
+            coordinates: [row.longitude, row.latitude]
+        },
+        status: row.status,
+        upvotes: row.upvotes,
+        downvotes: row.downvotes,
+        createdAt: row.created_at,
+        commentCount: row.comment_count || 0,
+        reportedBy: {
+            _id: row.user_id,
+            name: row.user_name,
+            email: row.user_email,
+            role: row.user_role,
+            avatar: row.user_avatar
+        },
+        wardId: row.ward_uuid ? {
+            _id: row.ward_uuid,
+            name: row.ward_name,
+            wardNumber: row.ward_number,
+            city: row.city,
+            state: row.state
+        } : null,
+        departmentId: row.dept_uuid ? {
+            _id: row.dept_uuid,
+            name: row.dept_name
+        } : null
+    }));
 
-    return res.status(200).json(new ApiResponse(200, issuesWithComments, "Issues fetched successfully"));
+    return res.status(200).json(new ApiResponse(200, formattedIssues, "Issues fetched successfully"));
 });
 
 export const getIssueById = asyncHandler(async (req: Request, res: Response) => {
     const idParam = req.params.id;
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
-    ensureObjectId(id, "Issue id");
+    ensureUuid(id, "Issue id");
 
-    const issue = await Issue.findById(id)
-        .populate("reportedBy", "name email role avatar")
-        .populate("wardId", "name wardNumber city state")
-        .populate("departmentId", "name description")
-        .populate("resolvedBy", "name email role");
+    const query = `
+        SELECT i.id AS "_id", i.title, i.description, i.category, i.images, i.latitude, i.longitude, i.status, i.upvotes, i.downvotes, i.created_at,
+               i.resolution_images, i.resolution_feedback, i.resolution_score, i.resolved_at,
+               u.id AS user_id, u.name AS user_name, u.email AS user_email, u.role AS user_role, u.avatar AS user_avatar,
+               w.id AS ward_uuid, w.name AS ward_name, w.ward_number, w.city, w.state,
+               d.id AS dept_uuid, d.name AS dept_name, d.description as dept_desc,
+               ru.id AS resolved_user_id, ru.name AS resolved_user_name, ru.email AS resolved_user_role,
+               (SELECT COUNT(*)::int FROM comments c WHERE c.issue_id = i.id) AS comment_count
+        FROM issues i
+        LEFT JOIN users u ON i.reported_by = u.id
+        LEFT JOIN wards w ON i.ward_id = w.id
+        LEFT JOIN departments d ON i.department_id = d.id
+        LEFT JOIN users ru ON i.resolved_by = ru.id
+        WHERE i.id = $1
+    `;
 
-    if (!issue) {
+    const result = await pool.query(query, [id]);
+    const row = result.rows[0];
+
+    if (!row) {
         throw new ApiError(404, "Issue not found");
     }
 
-    const commentCount = await Comment.countDocuments({ issueId: id });
-    const issueObj = issue.toObject();
-    (issueObj as any).commentCount = commentCount;
+    const formattedIssue = {
+        _id: row._id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        images: row.images || [],
+        location: {
+            type: "Point",
+            coordinates: [row.longitude, row.latitude]
+        },
+        status: row.status,
+        upvotes: row.upvotes,
+        downvotes: row.downvotes,
+        createdAt: row.created_at,
+        commentCount: row.comment_count || 0,
+        resolutionImages: row.resolution_images || [],
+        resolutionFeedback: row.resolution_feedback,
+        resolutionScore: row.resolution_score,
+        resolvedAt: row.resolved_at,
+        reportedBy: {
+            _id: row.user_id,
+            name: row.user_name,
+            email: row.user_email,
+            role: row.user_role,
+            avatar: row.user_avatar
+        },
+        wardId: row.ward_uuid ? {
+            _id: row.ward_uuid,
+            name: row.ward_name,
+            wardNumber: row.ward_number,
+            city: row.city,
+            state: row.state
+        } : null,
+        departmentId: row.dept_uuid ? {
+            _id: row.dept_uuid,
+            name: row.dept_name,
+            description: row.dept_desc
+        } : null,
+        resolvedBy: row.resolved_user_id ? {
+            _id: row.resolved_user_id,
+            name: row.resolved_user_name,
+            email: row.resolved_user_role
+        } : null
+    };
 
-    return res.status(200).json(new ApiResponse(200, issueObj, "Issue fetched successfully"));
+    return res.status(200).json(new ApiResponse(200, formattedIssue, "Issue fetched successfully"));
 });
 
 export const getNearbyIssues = asyncHandler(async (req: Request, res: Response) => {
@@ -166,37 +244,71 @@ export const getNearbyIssues = asyncHandler(async (req: Request, res: Response) 
         throw new ApiError(400, "latitude, longitude and radius must be valid positive numbers");
     }
 
-    const issues = await Issue.find({
+    // Haversine formula to compute distance in meters
+    const query = `
+        SELECT i.id AS "_id", i.title, i.description, i.category, i.images, i.latitude, i.longitude, i.status, i.upvotes, i.downvotes, i.created_at,
+               u.id AS user_id, u.name AS user_name, u.email AS user_email, u.role AS user_role, u.avatar AS user_avatar,
+               w.id AS ward_uuid, w.name AS ward_name, w.ward_number, w.city, w.state,
+               d.id AS dept_uuid, d.name AS dept_name,
+               (SELECT COUNT(*)::int FROM comments c WHERE c.issue_id = i.id) AS comment_count,
+               (6371000 * acos(
+                    least(1.0, greatest(-1.0, 
+                        cos(radians($1)) * cos(radians(i.latitude)) * cos(radians(i.longitude) - radians($2)) + 
+                        sin(radians($1)) * sin(radians(i.latitude))
+                    ))
+               )) AS distance
+        FROM issues i
+        LEFT JOIN users u ON i.reported_by = u.id
+        LEFT JOIN wards w ON i.ward_id = w.id
+        LEFT JOIN departments d ON i.department_id = d.id
+        GROUP BY i.id, u.id, w.id, d.id
+        HAVING (6371000 * acos(
+                    least(1.0, greatest(-1.0, 
+                        cos(radians($1)) * cos(radians(i.latitude)) * cos(radians(i.longitude) - radians($2)) + 
+                        sin(radians($1)) * sin(radians(i.latitude))
+                    ))
+               )) <= $3
+        ORDER BY i.created_at DESC
+    `;
+
+    const result = await pool.query(query, [lat, lng, radiusInMeters]);
+
+    const formattedIssues = result.rows.map(row => ({
+        _id: row._id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        images: row.images || [],
         location: {
-            $nearSphere: {
-                $geometry: {
-                    type: "Point",
-                    coordinates: [lng, lat],
-                },
-                $maxDistance: radiusInMeters,
-            },
+            type: "Point",
+            coordinates: [row.longitude, row.latitude]
         },
-    })
-        .populate("reportedBy", "name email role avatar")
-        .populate("wardId", "name wardNumber city state")
-        .populate("departmentId", "name")
-        .sort({ createdAt: -1 });
+        status: row.status,
+        upvotes: row.upvotes,
+        downvotes: row.downvotes,
+        createdAt: row.created_at,
+        commentCount: row.comment_count || 0,
+        reportedBy: {
+            _id: row.user_id,
+            name: row.user_name,
+            email: row.user_email,
+            role: row.user_role,
+            avatar: row.user_avatar
+        },
+        wardId: row.ward_uuid ? {
+            _id: row.ward_uuid,
+            name: row.ward_name,
+            wardNumber: row.ward_number,
+            city: row.city,
+            state: row.state
+        } : null,
+        departmentId: row.dept_uuid ? {
+            _id: row.dept_uuid,
+            name: row.dept_name
+        } : null
+    }));
 
-    // Attach comment counts
-    const issueIds = issues.map((i) => i._id);
-    const commentCounts = await Comment.aggregate([
-        { $match: { issueId: { $in: issueIds } } },
-        { $group: { _id: "$issueId", count: { $sum: 1 } } },
-    ]);
-    const countMap = new Map(commentCounts.map((c) => [c._id.toString(), c.count]));
-
-    const issuesWithComments = issues.map((issue) => {
-        const obj = issue.toObject();
-        (obj as any).commentCount = countMap.get(issue._id.toString()) || 0;
-        return obj;
-    });
-
-    return res.status(200).json(new ApiResponse(200, issuesWithComments, "Nearby issues fetched successfully"));
+    return res.status(200).json(new ApiResponse(200, formattedIssues, "Nearby issues fetched successfully"));
 });
 
 export const voteOnIssue = asyncHandler(async (req: Request, res: Response) => {
@@ -208,56 +320,79 @@ export const voteOnIssue = asyncHandler(async (req: Request, res: Response) => {
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
     const { vote } = req.body;
 
-    ensureObjectId(id, "Issue id");
+    ensureUuid(id, "Issue id");
 
     if (vote !== "upvote" && vote !== "downvote") {
         throw new ApiError(400, "vote must be either upvote or downvote");
     }
 
-    const issue = await Issue.findById(id);
+    const issueCheck = await pool.query("SELECT id, upvotes, downvotes FROM issues WHERE id = $1", [id]);
+    const issue = issueCheck.rows[0];
     if (!issue) {
         throw new ApiError(404, "Issue not found");
     }
 
-    const existingVote = await Vote.findOne({ issueId: id, userId: req.user.id });
+    // Check if vote already exists
+    const voteCheck = await pool.query(
+        "SELECT id, vote_type FROM votes WHERE issue_id = $1 AND user_id = $2",
+        [id, req.user.id]
+    );
 
-    if (!existingVote) {
-        await Vote.create({ issueId: id, userId: req.user.id, voteType: vote });
+    const existingVote = voteCheck.rows[0];
 
-        if (vote === "upvote") {
-            issue.upvotes += 1;
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+
+        if (!existingVote) {
+            // Create new vote
+            await client.query(
+                "INSERT INTO votes (issue_id, user_id, vote_type) VALUES ($1, $2, $3)",
+                [id, req.user.id, vote]
+            );
+
+            // Increment count
+            if (vote === "upvote") {
+                await client.query("UPDATE issues SET upvotes = upvotes + 1 WHERE id = $1", [id]);
+            } else {
+                await client.query("UPDATE issues SET downvotes = downvotes + 1 WHERE id = $1", [id]);
+            }
+        } else if (existingVote.vote_type === vote) {
+            // Vote remains unchanged
+            await client.query("COMMIT");
+            return res.status(200).json(new ApiResponse(200, issue, "Vote unchanged"));
         } else {
-            issue.downvotes += 1;
+            // Update vote type
+            await client.query(
+                "UPDATE votes SET vote_type = $1 WHERE id = $2",
+                [vote, existingVote.id]
+            );
+
+            // Swap count
+            if (vote === "upvote") {
+                await client.query(
+                    "UPDATE issues SET upvotes = upvotes + 1, downvotes = GREATEST(0, downvotes - 1) WHERE id = $1",
+                    [id]
+                );
+            } else {
+                await client.query(
+                    "UPDATE issues SET downvotes = downvotes + 1, upvotes = GREATEST(0, upvotes - 1) WHERE id = $1",
+                    [id]
+                );
+            }
         }
 
-        await issue.save();
+        await client.query("COMMIT");
 
-        return res
-            .status(200)
-            .json(new ApiResponse(200, issue, "Vote recorded successfully"));
+        // Fetch updated counts
+        const updatedCheck = await pool.query("SELECT id AS \"_id\", upvotes, downvotes, status FROM issues WHERE id = $1", [id]);
+        return res.status(200).json(new ApiResponse(200, updatedCheck.rows[0], "Vote updated successfully"));
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
     }
-
-    if (existingVote.voteType === vote) {
-        return res
-            .status(200)
-            .json(new ApiResponse(200, issue, "Vote unchanged"));
-    }
-
-    if (vote === "upvote") {
-        issue.upvotes += 1;
-        issue.downvotes = Math.max(0, issue.downvotes - 1);
-    } else {
-        issue.downvotes += 1;
-        issue.upvotes = Math.max(0, issue.upvotes - 1);
-    }
-
-    existingVote.voteType = vote;
-    await existingVote.save();
-    await issue.save();
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, issue, "Vote updated successfully"));
 });
 
 export const resolveIssue = asyncHandler(async (req: Request, res: Response) => {
@@ -267,9 +402,10 @@ export const resolveIssue = asyncHandler(async (req: Request, res: Response) => 
 
     const idParam = req.params.id;
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
-    ensureObjectId(id, "Issue id");
+    ensureUuid(id, "Issue id");
 
-    const issue = await Issue.findById(id);
+    const issueCheck = await pool.query("SELECT id, status, upvotes FROM issues WHERE id = $1", [id]);
+    const issue = issueCheck.rows[0];
     if (!issue) {
         throw new ApiError(404, "Issue not found");
     }
@@ -278,33 +414,44 @@ export const resolveIssue = asyncHandler(async (req: Request, res: Response) => 
         throw new ApiError(400, "Issue already resolved");
     }
 
-    issue.status = "resolved";
-    issue.resolvedBy = new mongoose.Types.ObjectId(req.user.id);
-    issue.resolvedAt = new Date();
-    await issue.save();
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
 
-    const pointsEarned = issue.upvotes * 2;
+        // Mark resolved
+        const resolvedAt = new Date();
+        const updateIssueResult = await client.query(
+            "UPDATE issues SET status = 'resolved', resolved_by = $1, resolved_at = $2 WHERE id = $3 RETURNING id AS \"_id\", status, resolved_by AS \"resolvedBy\", resolved_at AS \"resolvedAt\"",
+            [req.user.id, resolvedAt, id]
+        );
 
-    await User.findByIdAndUpdate(req.user.id, {
-        $inc: {
-            points: pointsEarned,
-            issuesResolved: 1,
-        },
-    });
+        const pointsEarned = issue.upvotes * 2;
 
-    return res.status(200).json(
-        new ApiResponse(
-            200,
-            {
-                issue,
-                pointsEarned,
-            },
-            "Issue resolved successfully"
-        )
-    );
+        // Reward authority
+        await client.query(
+            "UPDATE users SET points = points + $1, issues_resolved = issues_resolved + 1 WHERE id = $2",
+            [pointsEarned, req.user.id]
+        );
+
+        await client.query("COMMIT");
+
+        return res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    issue: updateIssueResult.rows[0],
+                    pointsEarned,
+                },
+                "Issue resolved successfully"
+            )
+        );
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
+    }
 });
-
-// ---- Comments ----
 
 export const addComment = asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
@@ -313,41 +460,66 @@ export const addComment = asyncHandler(async (req: Request, res: Response) => {
 
     const idParam = req.params.id;
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
-    ensureObjectId(id, "Issue id");
+    ensureUuid(id, "Issue id");
 
     const { text } = req.body;
     if (!text || !text.trim()) {
         throw new ApiError(400, "Comment text is required");
     }
 
-    const issue = await Issue.findById(id);
-    if (!issue) {
+    const issueCheck = await pool.query("SELECT id FROM issues WHERE id = $1", [id]);
+    if (issueCheck.rows.length === 0) {
         throw new ApiError(404, "Issue not found");
     }
 
-    const comment = await Comment.create({
-        issueId: id,
-        userId: req.user.id,
-        text: text.trim(),
-    });
+    // Insert comment
+    const commentResult = await pool.query(
+        "INSERT INTO comments (issue_id, user_id, text) VALUES ($1, $2, $3) RETURNING id AS \"_id\", text, created_at AS \"createdAt\"",
+        [id, req.user.id, text.trim()]
+    );
 
-    const populated = await comment.populate("userId", "name email avatar");
+    // Fetch user details
+    const userResult = await pool.query("SELECT id AS \"_id\", name, email, avatar FROM users WHERE id = $1", [req.user.id]);
+
+    const formattedComment = {
+        ...commentResult.rows[0],
+        userId: userResult.rows[0]
+    };
 
     return res
         .status(201)
-        .json(new ApiResponse(201, populated, "Comment added successfully"));
+        .json(new ApiResponse(201, formattedComment, "Comment added successfully"));
 });
 
 export const getComments = asyncHandler(async (req: Request, res: Response) => {
     const idParam = req.params.id;
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
-    ensureObjectId(id, "Issue id");
+    ensureUuid(id, "Issue id");
 
-    const comments = await Comment.find({ issueId: id })
-        .populate("userId", "name email avatar")
-        .sort({ createdAt: -1 });
+    const query = `
+        SELECT c.id AS "_id", c.text, c.created_at AS "createdAt",
+               u.id AS user_id, u.name AS user_name, u.email AS user_email, u.avatar AS user_avatar
+        FROM comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.issue_id = $1
+        ORDER BY c.created_at DESC
+    `;
+
+    const result = await pool.query(query, [id]);
+
+    const formattedComments = result.rows.map(row => ({
+        _id: row._id,
+        text: row.text,
+        createdAt: row.createdAt,
+        userId: {
+            _id: row.user_id,
+            name: row.user_name,
+            email: row.user_email,
+            avatar: row.user_avatar
+        }
+    }));
 
     return res
         .status(200)
-        .json(new ApiResponse(200, comments, "Comments fetched successfully"));
+        .json(new ApiResponse(200, formattedComments, "Comments fetched successfully"));
 });
