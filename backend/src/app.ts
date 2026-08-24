@@ -30,7 +30,6 @@ app.use(
                 "https://mkqzgr6r-3000.inc1.devtunnels.ms",
                 "http://localhost:5173",
                 "http://localhost:5174", // In case you change ports
-                "http://127.0.0.1:3000", // Alternative localhost
                 "https://jan-seva-nine.vercel.app",
                 process.env.CLIENT_URL,
                 process.env.CORS_ORIGIN,
