@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  fullName      String
+  email         String   @unique
+  passwordHash  String?
+  phone         String?
+  anonymousName String   @unique
+  verified      Boolean  @default(false)
+  role          String   @default("USER")
+  createdAt     DateTime @default(now())
+  reports       Issue[]  @relation("reporter")
+}
+
+model Authority {
+  id              String @id @default(cuid())
+  name            String
+  employeeId      String @unique @default(cuid())
+  designation     String
+  department      String
+  serviceCategory String
+
+  officeLocation String?
+  officeAddress  String?
+  officePhone    String?
+  
+  latitude       Float?
+  longitude      Float?
+
+  jurisdictionWards    String? // Stored as JSON string
+  jurisdictionSectors  String? // Stored as JSON string
+  jurisdictionBoundary String? // Stored as JSON string
+
+  currentTasks   Int    @default(0)
+  completedTasks Int    @default(0)
+  totalPoints    Int    @default(0)
+  averageRating  Float?
+
+  status     String    @default("active")
+  verifiedBy String?
+  verifiedAt DateTime?
+
+  issues Issue[]
+  tasks  Task[]
+  stats  AuthorityStats?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Issue {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  category    String
+  photoUrl    String
+
+  latitude         Float
+  longitude        Float
+  locationAddress  String?
+  locationAccuracy Int?
+
+  status   String @default("filed")
+  severity String @default("minor")
+
+  reporterId        String
+  reporter          User    @relation("reporter", fields: [reporterId], references: [id])
+  anonymousUsername String?
+
+  authorityId String?
+  authority   Authority? @relation(fields: [authorityId], references: [id])
+
+  tasks    Task[]
+  votes    Vote[]
+  comments Comment[]
+
+  deadline    DateTime?
+  submittedAt DateTime?
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  issue     Issue    @relation(fields: [issueId], references: [id])
+  issueId   String
+  userId    String
+  value     Int
+  voteType  String   @default("upvote")
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([issueId, userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  issue     Issue    @relation(fields: [issueId], references: [id])
+  issueId   String
+  userId    String
+  text      String
+  isOfficial Boolean @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuthorityStats {
+  id                String    @id @default(cuid())
+  authorityId       String    @unique
+  issuesResolved    Int       @default(0)
+  avgResolutionMins Float?
+  rewardPoints      Int       @default(0)
+  demeritPoints     Int       @default(0)
+  authority         Authority @relation(fields: [authorityId], references: [id])
+}
+
+model Flag {
+  id        String   @id @default(cuid())
+  commentId String
+  userId    String
+  reason    String?
+  createdAt DateTime @default(now())
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+model Task {
+  id         String    @id @default(cuid())
+  issueId    String
+  issue      Issue     @relation(fields: [issueId], references: [id])
+  officialId String
+  official   Authority @relation(fields: [officialId], references: [id])
+
+  status String @default("assigned") // assigned, in_progress, submitted, verified, approved, rejected
+
+  assignedAt  DateTime  @default(now())
+  startedAt   DateTime?
+  deadline    DateTime
+  submittedAt DateTime?
+  completedAt DateTime?
+
+  beforePhotoUrl  String?
+  beforePhotoTime DateTime?
+  beforePhotoLat  Float?
+  beforePhotoLng  Float?
+
+  afterPhotoUrl  String?
+  afterPhotoTime DateTime?
+  afterPhotoLat  Float?
+  afterPhotoLng  Float?
+
+  workNotes String?
+
+  pointsEarned Int     @default(0)
+  pointsBasis  String? // JSON string
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
